@@ -1,68 +1,50 @@
-import pathlib
-from queue import Queue
-from threading import Thread, Event
-import logging
+import os
+import threading
+import time
+import queue  # Імпортуємо модуль черги
 
-
-class Writer:
-    def __init__(self, filename: str, e: Event):
-        self.filename = filename
-        self.files_for_handling = Queue()
-        self.event = e
-        self.file = open(self.filename, "w", encoding="utf-8")
-
-    def __call__(self, *args, **kwargs):
-        while True:
-            if self.files_for_handling.empty():
-                if self.event.is_set():
-                    break
+def search_word_in_file(filename, word, results_queue):
+    print(f"Обробляється файл: {filename}")  # Додано логування
+    try:
+        with open(filename, 'r', encoding='utf-8') as file:
+            content = file.read()
+            if word in content:
+                results_queue.put((filename, word))
+                print(f"Знайдено '{word}' у файлі {filename}")  # Додано логування
             else:
-                file, blob = self.files_for_handling.get()
-                logging.info(f"Write file {file.name}")
-                self.file.write(f"{blob}\n")
+                print(f"У файлі {filename} слово не знайдено")  # Додано логування
+    except Exception as e:
+        print(f"Error occurred while processing {filename}: {e}")
 
-    def __del__(self):
-        self.file.close()
+def main():
+    folder_path = "files"  # шлях до папки з файлами
+    word_to_search = "numpy"  # слово, яке шукаємо
 
+    file_list = os.listdir(folder_path)
+    file_paths = [os.path.join(folder_path, file) for file in file_list]
 
-def reader(files_for_handling: Queue):
-    while True:
-        if files_for_reading.empty():
-            break
-        file: pathlib.Path = files_for_reading.get()
-        logging.info(f"read file {file.name}")
-        with open(file, "r", encoding="utf-8") as f:
-            data = []
-            for line in f:
-                data.append(line)
-            files_for_handling.put((file, "".join(data)))
+    results_queue = queue.Queue()  # Створюємо чергу для результатів
+    threads = []
+    for file_path in file_paths:
+        thread = threading.Thread(target=search_word_in_file, args=(file_path, word_to_search, results_queue))
+        thread.start()
+        threads.append(thread)
 
+    for thread in threads:
+        thread.join()
+
+    results = {}  # Словник для зберігання результатів
+    while not results_queue.empty():
+        filename, word = results_queue.get()
+        results[filename] = word
+
+    # Виводимо результати
+    print("Результати пошуку:")
+    for filename, word in results.items():
+        print(f"Слово '{word}' знайдено в файлі '{filename}'")
 
 if __name__ == "__main__":
-    message_format = "%(threadName)s %(asctime)s: %(message)s"
-    logging.basicConfig(format=message_format, level=logging.INFO, datefmt="%H:%M:%S")
-    files_for_reading = Queue()
-    event = Event()
-
-    list_files = pathlib.Path(".").joinpath("files").glob("*.js")
-    print(list_files)
-    [files_for_reading.put(file) for file in list_files]
-    print(files_for_reading)
-
-    if files_for_reading.empty():
-        logging.info("Folder is empty")
-    else:
-        writer = Writer("main.js", event)
-        th_writer = Thread(target=writer, name="Writer")
-        th_writer.start()
-
-        threads = []
-        for i in range(2):
-            tr = Thread(
-                target=reader, args=(writer.files_for_handling,), name=f"Thread#{i}"
-            )
-            tr.start()
-            threads.append(tr)
-
-        [th.join() for th in threads]
-        event.set()  # файлів для зчитування немає
+    start_time = time.time()
+    main()
+    end_time = time.time()
+    print(f"Час виконання: {end_time - start_time} секунд")

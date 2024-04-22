@@ -1,77 +1,44 @@
-import pathlib
-import logging
-from multiprocessing import Process, Queue, Event
-from sys import exit
+import os
+import time
+from multiprocessing import Pool, Manager, cpu_count
 
-message_format = "%(processName)s %(asctime)s: %(message)s"
-logging.basicConfig(format=message_format, level=logging.INFO, datefmt="%H:%M:%S")
-
-
-class Writer:
-    def __init__(self, filename: str, e: Event):
-        self.filename = filename
-        self.files_for_handling = Queue()
-        self.event = e
-        self.file = open(self.filename, "w", encoding="utf-8")
-
-    def __call__(self, *args, **kwargs):
-        while True:
-            if self.files_for_handling.empty():
-                if self.event.is_set():
-                    exit(0)
+def search_word_in_file(args):
+    filename, word, results_dict = args
+    print(f"Обробляється файл: {filename}")  # Додано логування
+    try:
+        with open(filename, 'r', encoding='utf-8') as file:
+            content = file.read()
+            if word in content:
+                results_dict[filename] = word
+                print(f"Знайдено '{word}' у файлі {filename}")  # Додано логування
             else:
-                file, blob = self.files_for_handling.get()
-                logging.info(f"Write file {file.name}")
-                self.file.write(f"{blob}\n")
+                print(f"У файлі {filename} слово не знайдено")  # Додано логування
+    except Exception as e:
+        print(f"Error occurred while processing {filename}: {e}")
 
-    def __getstate__(self):  # Для серілізації pickle 
-        return {**self.__dict__, "file": None}
+def main():
+    folder_path = "files"  # шлях до папки з файлами
+    word_to_search = "numpy"  # слово, яке шукаємо
 
-    def __setstate__(self, state):  # Для серілізації pickle
-        self.__dict__.update(state)
-        self.file = open(self.filename, "w", encoding="utf-8")
+    file_list = os.listdir(folder_path)
+    file_paths = [os.path.join(folder_path, file) for file in file_list]
 
-    def __del__(self):
-        self.file.close()
+    manager = Manager()
+    results_dict = manager.dict()  # Створюємо словник для результатів у менеджері
 
+    pool_size = cpu_count()  # Кількість процесів відповідає кількості ядер процесора
 
-def reader(files_for_reading: Queue, files_for_handling: Queue):
-    while True:
-        if files_for_reading.empty():
-            break
-        file: pathlib.Path = files_for_reading.get()
-        logging.info(f"read file {file.name}")
-        with open(file, "r", encoding="utf-8") as f:
-            data = []
-            for line in f:
-                data.append(line)
-            files_for_handling.put((file, "".join(data)))
+    # Створюємо пул процесів
+    with Pool(pool_size) as pool:
+        pool.map(search_word_in_file, [(file_path, word_to_search, results_dict) for file_path in file_paths])
 
+    # Виводимо результати
+    print("Результати пошуку:")
+    for filename, word in results_dict.items():
+        print(f"Слово '{word}' знайдено в файлі '{filename}'")
 
 if __name__ == "__main__":
-
-    files_for_reading = Queue()
-    event = Event()
-
-    list_files = pathlib.Path(".").joinpath("files").glob("*.js")
-    print(list_files)
-    [files_for_reading.put(file) for file in list_files]
-    print(files_for_reading)
-
-    if files_for_reading.empty():
-        logging.info("Folder is empty")
-    else:
-        writer = Writer("main.js", event)
-        th_writer = Process(target=writer, name="Writer")
-        th_writer.start()
-
-        threads = []
-        for i in range(2):
-            tr = Process(
-                target=reader, args=(files_for_reading, writer.files_for_handling,), name=f"Process#{i}"
-            )
-            tr.start()
-            threads.append(tr)
-
-        [th.join() for th in threads]
-        event.set()  # файлів для зчитування немає
+    start_time = time.time()
+    main()
+    end_time = time.time()
+    print(f"Час виконання: {end_time - start_time} секунд")
